@@ -35,9 +35,10 @@ Useful flags:
 - `--group-size`
 - `--outlier-sigma`
 - `--no-vq`
-- `--download-jobs`: parallelize remote Hugging Face downloads
-- `--pack-jobs`: parallelize tensor packing work in `axon-pack`
-- `--pack-gpu`: enable CUDA-backed quantization when the packer has PyTorch/CUDA available
+- `--download-jobs`: parallelize remote Hugging Face downloads, default `6`
+- `--pack-jobs`: parallelize tensor packing work in `axon-pack`, default `6`
+- GPU packing is preferred by default when `axon-pack` has PyTorch/CUDA available
+- `--no-pack-gpu`: disable GPU-backed packing
 
 ## Run
 

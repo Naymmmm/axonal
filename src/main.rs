@@ -69,12 +69,12 @@ enum Command {
         outlier_sigma: f64,
         #[arg(long)]
         no_vq: bool,
+        #[arg(long, default_value_t = 6)]
+        download_jobs: usize,
+        #[arg(long, default_value_t = 6)]
+        pack_jobs: usize,
         #[arg(long)]
-        download_jobs: Option<usize>,
-        #[arg(long)]
-        pack_jobs: Option<usize>,
-        #[arg(long)]
-        pack_gpu: bool,
+        no_pack_gpu: bool,
     },
     Run {
         model: String,
@@ -241,7 +241,7 @@ fn main() -> Result<()> {
             no_vq,
             download_jobs,
             pack_jobs,
-            pack_gpu,
+            no_pack_gpu,
         } => {
             let installed = convert_command(
                 &source,
@@ -255,9 +255,9 @@ fn main() -> Result<()> {
                 group_size,
                 outlier_sigma,
                 no_vq,
-                download_jobs,
-                pack_jobs,
-                pack_gpu,
+                Some(download_jobs),
+                Some(pack_jobs),
+                !no_pack_gpu,
             )?;
             println!("{}", installed.display());
         }
@@ -1379,7 +1379,14 @@ fn run_axon_pack_pack(
     pack_gpu: bool,
 ) -> Result<()> {
     let repo = axon_pack_repo()?;
-    let python = env::var("AXONAL_PYTHON").unwrap_or_else(|_| "python3".to_string());
+    let python = env::var("AXONAL_PYTHON").unwrap_or_else(|_| {
+        let venv_python = repo.join(".venv").join("bin").join("python");
+        if venv_python.is_file() {
+            venv_python.display().to_string()
+        } else {
+            "python3".to_string()
+        }
+    });
     let mut command = ProcessCommand::new(python);
     let python_root = repo.join("python");
     let pythonpath = match env::var_os("PYTHONPATH") {
@@ -1417,8 +1424,8 @@ fn run_axon_pack_pack(
     if no_vq {
         command.arg("--no-vq");
     }
-    if pack_gpu {
-        command.arg("--gpu");
+    if !pack_gpu {
+        command.arg("--no-gpu");
     }
     eprintln!(
         "[axonal] convert: invoking axon-pack for {}",

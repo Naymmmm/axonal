@@ -113,9 +113,10 @@ By default `axonal` uses:
 
 Useful performance flags for conversion:
 
-- `--download-jobs`: parallel Hugging Face file downloads
-- `--pack-jobs`: parallel tensor packing workers inside `axon-pack`
-- `--pack-gpu`: enable CUDA-backed quantization in `axon-pack` when PyTorch/CUDA is available
+- `--download-jobs`: parallel Hugging Face file downloads, default `6`
+- `--pack-jobs`: parallel tensor packing workers inside `axon-pack`, default `6`
+- GPU packing is preferred by default when `axon-pack` has PyTorch/CUDA available
+- `--no-pack-gpu`: force CPU-only packing
 
 LoRA delta bundles are resolved against a base AXON bundle by searching:
 
