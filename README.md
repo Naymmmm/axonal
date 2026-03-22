@@ -70,7 +70,7 @@ axonal convert Qwen/Qwen2.5-0.5B-Instruct --name qwen2_5_0_5b
 Local source directory or GGUF file:
 
 ```bash
-axonal convert /path/to/model --local --name local-model
+axonal convert /path/to/model --local --name local-model --pack-jobs 8
 ```
 
 ### 3. Inspect and run it
@@ -110,6 +110,12 @@ By default `axonal` uses:
 - otherwise `~/.axonal/models`
 
 `axonal convert` installs bundles there by default, and `axonal ls` scans the same location.
+
+Useful performance flags for conversion:
+
+- `--download-jobs`: parallel Hugging Face file downloads
+- `--pack-jobs`: parallel tensor packing workers inside `axon-pack`
+- `--pack-gpu`: enable CUDA-backed quantization in `axon-pack` when PyTorch/CUDA is available
 
 LoRA delta bundles are resolved against a base AXON bundle by searching:
 

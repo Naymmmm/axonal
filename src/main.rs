@@ -20,13 +20,14 @@ use rpassword::prompt_password;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::collections::VecDeque;
 use std::env;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
@@ -68,6 +69,12 @@ enum Command {
         outlier_sigma: f64,
         #[arg(long)]
         no_vq: bool,
+        #[arg(long)]
+        download_jobs: Option<usize>,
+        #[arg(long)]
+        pack_jobs: Option<usize>,
+        #[arg(long)]
+        pack_gpu: bool,
     },
     Run {
         model: String,
@@ -232,6 +239,9 @@ fn main() -> Result<()> {
             group_size,
             outlier_sigma,
             no_vq,
+            download_jobs,
+            pack_jobs,
+            pack_gpu,
         } => {
             let installed = convert_command(
                 &source,
@@ -245,6 +255,9 @@ fn main() -> Result<()> {
                 group_size,
                 outlier_sigma,
                 no_vq,
+                download_jobs,
+                pack_jobs,
+                pack_gpu,
             )?;
             println!("{}", installed.display());
         }
@@ -827,6 +840,9 @@ fn convert_command(
     group_size: Option<usize>,
     outlier_sigma: f64,
     no_vq: bool,
+    download_jobs: Option<usize>,
+    pack_jobs: Option<usize>,
+    pack_gpu: bool,
 ) -> Result<PathBuf> {
     let model_name = normalize_model_name(name.unwrap_or(&default_convert_name(source, local)));
     let library_root = library
@@ -851,7 +867,7 @@ fn convert_command(
             "[axonal] convert: downloading Hugging Face repo {} @ {}",
             source, revision
         );
-        download_huggingface_repo(source, revision, &checkout)?;
+        download_huggingface_repo(source, revision, &checkout, download_jobs)?;
         workspace = Some(temp);
         checkout
     };
@@ -877,6 +893,8 @@ fn convert_command(
         group_size,
         outlier_sigma,
         no_vq,
+        pack_jobs,
+        pack_gpu,
     )?;
     drop(workspace);
     Ok(install_path)
@@ -1034,7 +1052,22 @@ fn huggingface_headers() -> Result<HeaderMap> {
     Ok(headers)
 }
 
-fn download_huggingface_repo(repo_id: &str, revision: &str, target_dir: &Path) -> Result<()> {
+fn default_parallel_jobs(total_items: usize) -> usize {
+    if total_items <= 1 {
+        return 1;
+    }
+    let cpu_count = thread::available_parallelism()
+        .map(|value| value.get())
+        .unwrap_or(4);
+    total_items.min(cpu_count).min(8).max(1)
+}
+
+fn download_huggingface_repo(
+    repo_id: &str,
+    revision: &str,
+    target_dir: &Path,
+    download_jobs: Option<usize>,
+) -> Result<()> {
     fs::create_dir_all(target_dir)
         .with_context(|| format!("failed to create {}", target_dir.display()))?;
     let client = http_client();
@@ -1064,17 +1097,68 @@ fn download_huggingface_repo(repo_id: &str, revision: &str, target_dir: &Path) -
         repo_id
     );
     let total_files = files.len();
-    for (index, file_name) in files.into_iter().enumerate() {
-        download_huggingface_file(
-            &client,
-            &headers,
-            repo_id,
-            revision,
-            &file_name,
-            target_dir,
-            index + 1,
-            total_files,
-        )?;
+    let worker_count = download_jobs.unwrap_or_else(|| default_parallel_jobs(total_files)).max(1);
+    if worker_count <= 1 || total_files <= 1 {
+        for (index, file_name) in files.into_iter().enumerate() {
+            download_huggingface_file(
+                &client,
+                &headers,
+                repo_id,
+                revision,
+                &file_name,
+                target_dir,
+                index + 1,
+                total_files,
+            )?;
+        }
+    } else {
+        eprintln!(
+            "[axonal] convert: using {} parallel download worker(s)",
+            worker_count
+        );
+        let queue = Arc::new(Mutex::new(
+            files.into_iter()
+                .enumerate()
+                .map(|(index, file_name)| (index + 1, file_name))
+                .collect::<VecDeque<_>>(),
+        ));
+        let mut handles = Vec::new();
+        for _ in 0..worker_count {
+            let queue = Arc::clone(&queue);
+            let client = client.clone();
+            let headers = headers.clone();
+            let repo_id = repo_id.to_string();
+            let revision = revision.to_string();
+            let target_dir = target_dir.to_path_buf();
+            handles.push(thread::spawn(move || -> Result<()> {
+                loop {
+                    let next = {
+                        let mut queue = queue.lock().expect("download queue lock poisoned");
+                        queue.pop_front()
+                    };
+                    let Some((file_index, file_name)) = next else {
+                        break;
+                    };
+                    download_huggingface_file(
+                        &client,
+                        &headers,
+                        &repo_id,
+                        &revision,
+                        &file_name,
+                        &target_dir,
+                        file_index,
+                        total_files,
+                    )?;
+                }
+                Ok(())
+            }));
+        }
+        for handle in handles {
+            match handle.join() {
+                Ok(result) => result?,
+                Err(_) => bail!("a Hugging Face download worker panicked"),
+            }
+        }
     }
     eprintln!("[axonal] convert: download complete");
     Ok(())
@@ -1291,6 +1375,8 @@ fn run_axon_pack_pack(
     group_size: Option<usize>,
     outlier_sigma: f64,
     no_vq: bool,
+    pack_jobs: Option<usize>,
+    pack_gpu: bool,
 ) -> Result<()> {
     let repo = axon_pack_repo()?;
     let python = env::var("AXONAL_PYTHON").unwrap_or_else(|_| "python3".to_string());
@@ -1325,8 +1411,14 @@ fn run_axon_pack_pack(
     if let Some(group_size) = group_size {
         command.arg("--group-size").arg(group_size.to_string());
     }
+    if let Some(pack_jobs) = pack_jobs {
+        command.arg("--jobs").arg(pack_jobs.to_string());
+    }
     if no_vq {
         command.arg("--no-vq");
+    }
+    if pack_gpu {
+        command.arg("--gpu");
     }
     eprintln!(
         "[axonal] convert: invoking axon-pack for {}",

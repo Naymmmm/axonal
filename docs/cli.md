@@ -35,6 +35,9 @@ Useful flags:
 - `--group-size`
 - `--outlier-sigma`
 - `--no-vq`
+- `--download-jobs`: parallelize remote Hugging Face downloads
+- `--pack-jobs`: parallelize tensor packing work in `axon-pack`
+- `--pack-gpu`: enable CUDA-backed quantization when the packer has PyTorch/CUDA available
 
 ## Run
 
