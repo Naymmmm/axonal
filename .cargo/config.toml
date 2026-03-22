@@ -1,0 +1,8 @@
+[build]
+rustflags = ["-C", "target-feature=+fp16"]
+
+[env]
+CUDARC_CUDA_VERSION = "13010"
+CUDA_HOME = "/usr/local/cuda"
+CUDA_PATH = "/usr/local/cuda"
+PATH = { value = "/usr/local/cuda/bin:/usr/bin:/bin", force = true }
